@@ -1,198 +1,206 @@
-# Humanoid Whole-Body Motion Planning
+# 3D-картограф: цифровой двойник этажа
 
-<p align="center">
-  <img src="media/showcase_demo.gif" width="600"/>
-</p>
+Проект по построению 3D-карты виртуального этажа по данным лидара. Робот Unitree G1 и коридор моделируются в MuJoCo, облако точек публикуется в ROS 2, а KISS-ICP регистрирует последовательность сканов и накапливает единую карту в реальном времени.
 
-**Advanced motion planning system for Unitree G1 humanoid robot in MuJoCo simulation.**
+## Возможности
 
-[![Python](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/)
-[![MuJoCo](https://img.shields.io/badge/MuJoCo-3.0+-green.svg)](https://mujoco.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+- виртуальный 3D-лидар на модели Unitree G1;
+- raycasting в MuJoCo с полем зрения 360° по горизонтали и 30° по вертикали;
+- публикация облака в ROS 2 topic `/pointcloud2` в формате `sensor_msgs/PointCloud2`;
+- ручное перемещение робота по виртуальному коридору через `/cmd_vel`;
+- визуализация живого облака, траектории и карты в RViz2;
+- регистрация сканов KISS-ICP в реальном времени;
+- сохранение итоговой карты в `.npy`, `.ply` и `.pcd`.
 
-## Key Features
+## Архитектура
 
-| Feature | Description | Result |
-|---------|-------------|--------|
-| **Walk + Reach** | Whole-body coordination | 2m walk + 4/4 reach |
-| **ZMP Preview Control** | LIPM CoM trajectory (Kajita) | 69cm trajectory |
-| **Footstep Planning** | A* search with obstacles | 16 steps |
-| **MPC Balance** | Predictive control | 49% less energy |
-| **RL Locomotion** | Pre-trained policy | 2.01m @ 0.4m/s |
-| **Push Recovery** | Perturbation resistance | 4/4 survived |
-
-## Demo Results
-
-<p align="center">
-  <img src="results/locomotion.gif" width="45%"/>
-  <img src="results/phase2-4.gif" width="45%"/>
-</p>
-
-*Left: RL Locomotion (2.01m walk) | Right: Manipulation, Push Recovery, Wave*
-```
-╔══════════════════════════════════════════════════════════╗
-║              HUMANOID SHOWCASE DEMO                      ║
-║        Walk → Reach → Push Recovery → Wave              ║
-╚══════════════════════════════════════════════════════════╝
-
-[PHASE 1] Walking 2 meters...
-  ✓ Walked 2.01m
-
-[PHASE 2-4] Manipulation, Push Recovery, Wave...
-  ✓ Reaching: 4/4 targets
-  ✓ Push recovery: 2/2 survived
-  ✓ Victory wave: Done!
+```text
+MuJoCo: test_corridor.xml + lidar_raycaster.py
+                 |
+                 v
+      lidar_ros2_node.py
+       /pointcloud2 + TF
+                 |
+                 v
+      kiss_icp_slam_node.py
+       ICP + VoxelHashMap
+                 |
+       /kiss_icp/global_map
+       /kiss_icp/local_map
+       /kiss_icp/odometry
+       /kiss_icp/path
 ```
 
-## Quick Start
+Лидар испускает 360 горизонтальных лучей в каждом из 16 вертикальных слоёв, всего **5760 лучей на скан**. Точки переводятся из локальной системы лидара в мировую систему MuJoCo и публикуются с frame id `lidar_link`.
+
+## Структура проекта
+
+```text
+.
+├── test_corridor.xml          # Тестовая сцена: коридор 10 x 2 м
+├── lidar_raycaster.py         # Raycasting и генерация облака точек
+├── lidar_ros2_node.py         # MuJoCo + ROS 2 + /pointcloud2 + TF
+├── kiss_icp_slam_node.py      # Регистрация сканов и построение карты
+├── test_lidar_raycaster.py    # Диагностический тест виртуального лидара
+├── maps/                      # Сохраненные результаты картирования
+│   ├── slam_map.npy
+│   ├── slam_map.ply
+│   └── slam_map.pcd
+├── results/                   # Итоговые материалы эксперимента
+└── src/                       # Дополнительные эксперименты с Unitree G1
+```
+
+## Требования
+
+- macOS или Linux;
+- Python 3.10+;
+- ROS 2 с пакетами `rclpy`, `sensor_msgs`, `geometry_msgs`, `nav_msgs`, `tf2_ros`;
+- MuJoCo;
+- NumPy;
+- `kiss-icp==1.2.3`;
+- Open3D для экспорта карты в `.ply` и `.pcd`;
+- RViz2.
+
+Важно: ROS 2 и KISS-ICP должны быть доступны одному интерпретатору Python. В ходе проекта `kiss-icp` был установлен в системный Python, а conda использовала другой интерпретатор. Поэтому SLAM-нода запускалась явно через `/usr/bin/python3`.
+
+## Установка
+
+Запустите команды из корня репозитория:
 
 ```bash
-# Clone the repository
-git clone https://github.com/ansh1113/humanoid-motion-planning.git
-cd humanoid-motion-planning
+cd /path/to/ros2_project
 
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate
+# Активировать ROS 2 (подставьте установленный дистрибутив вместо humble)
+source /opt/ros/humble/setup.bash
 
-# Install dependencies
-pip install mujoco numpy scipy matplotlib torch
-
-# Run the showcase demo
-python src/showcase_demo.py
+# Установить Python-зависимости в тот же интерпретатор, где запускается SLAM
+/usr/bin/python3 -m pip install numpy mujoco open3d kiss-icp==1.2.3
 ```
 
-## Project Structure
+Проверка окружения:
 
-```
-humanoid_motion_planning/
-├── src/
-│   ├── showcase_demo.py           # Video-friendly continuous demo
-│   ├── full_visualization.py      # Step-by-step feature demo
-│   ├── walk_and_reach.py          # Whole-body coordination
-│   ├── zmp_preview_control.py     # LIPM preview control
-│   ├── footstep_planner.py        # A* footstep planning
-│   ├── mpc_balance.py             # MPC controller
-│   └── locomotion/
-│       └── g1_walker.py           # RL-based walking
-├── results/                        # Output visualizations
-├── media/                          # Demo GIFs and videos
-├── mujoco_menagerie/unitree_g1/   # Robot model
-└── unitree_rl_gym/                # Pre-trained RL policy
+```bash
+/usr/bin/python3 -c "import mujoco, numpy, open3d, kiss_icp; print('dependencies: OK')"
+ros2 doctor --report
 ```
 
-## Technical Details
+## Запуск полного эксперимента
 
-### ZMP Preview Control
-Classic Kajita LIPM method for CoM trajectory generation:
-```
-LIPM: x'' = ω²(x - ZMP), ω = √(g/z_c) ≈ 3.6 rad/s
-```
+### 1. Проверить лидар в MuJoCo
 
-### Footstep Planning
-A* search with discrete actions:
-- Forward: 8-25cm, Lateral: ±12cm, Rotation: ±17°
-- Real-time collision checking with obstacles
-
-### MPC Balance
-```
-State: [x, ẋ], Control: acceleration
-Horizon: 25 steps (0.5s), Cost: J = Σ(Q·x² + R·u²)
+```bash
+source /opt/ros/humble/setup.bash
+python3 test_lidar_raycaster.py
 ```
 
-### Jacobian IK
-Damped least-squares with waist compensation:
+Откроется окно MuJoCo с тестовой сценой. В терминале печатаются число лучей, доля попаданий и диапазон измеренных расстояний.
+
+### 2. Запустить ROS 2-ноду лидара
+
+В первом терминале:
+
+```bash
+source /opt/ros/humble/setup.bash
+python3 lidar_ros2_node.py
+```
+
+Нода запускает симуляцию, публикует `/pointcloud2` с частотой 10 Гц и трансформации `map -> odom -> base_link -> lidar_link`.
+
+Проверить поток данных можно так:
+
+```bash
+ros2 topic list
+ros2 topic hz /pointcloud2
+ros2 topic echo /pointcloud2 --once
+```
+
+### 3. Запустить KISS-ICP
+
+Во втором терминале из корня проекта:
+
+```bash
+source /opt/ros/humble/setup.bash
+/usr/bin/python3 kiss_icp_slam_node.py
+```
+
+SLAM-нода подписывается на `/pointcloud2`, отбрасывает точки ближе 0.3 м и дальше 10 м, выполняет voxel downsampling и ICP-регистрацию. Размер voxel-а локальной карты составляет 0.1 м.
+
+### 4. Перемещать робота
+
+Нода принимает стандартное сообщение `geometry_msgs/msg/Twist` на `/cmd_vel`. Например:
+
+```bash
+# Движение вперед со скоростью 0.20 м/с
+ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist \
+  "{linear: {x: 0.20}, angular: {z: 0.0}}"
+
+# Поворот на месте
+ros2 topic pub -r 10 /cmd_vel geometry_msgs/msg/Twist \
+  "{linear: {x: 0.0}, angular: {z: 0.35}}"
+
+# Остановить робота
+ros2 topic pub --once /cmd_vel geometry_msgs/msg/Twist \
+  "{linear: {x: 0.0}, angular: {z: 0.0}}"
+```
+
+Для ручного управления можно использовать любой ROS 2 teleop-узел, публикующий `/cmd_vel`.
+
+### 5. Настроить RViz2
+
+В третьем терминале:
+
+```bash
+source /opt/ros/humble/setup.bash
+rviz2
+```
+
+В RViz2:
+
+1. установить `Fixed Frame = odom`;
+2. добавить `PointCloud2` с topic `/pointcloud2` для живого скана;
+3. добавить `/kiss_icp/local_map` для локальной карты;
+4. добавить `/kiss_icp/global_map` для накопленной карты;
+5. добавить `Path` с topic `/kiss_icp/path` для траектории;
+6. при необходимости добавить `Odometry` с topic `/kiss_icp/odometry`.
+
+## Результаты
+
+| Показатель                    |                           Результат |
+| ----------------------------- | ----------------------------------: |
+| Модель робота                 |                          Unitree G1 |
+| Сцена                         | виртуальный коридор MuJoCo 10 x 2 м |
+| Частота публикации облака     |                               10 Гц |
+| Производительность raycasting |           14.3 мс/скан, около 70 Гц |
+| Обработано сканов             |                                 807 |
+| Среднее время ICP             |                        14.3 мс/скан |
+| Размер итоговой карты         |                        54 194 точки |
+| `slam_map.npy`                |                              1.3 МБ |
+| `slam_map.ply`                |                              1.3 МБ |
+| `slam_map.pcd`                |                              636 КБ |
+
+Готовые файлы находятся в каталоге [`maps/`](maps/). Форматы `.ply` и `.pcd` удобно открывать в Open3D, CloudCompare или MeshLab.
+
+## Форматы сохранения
+
+Пример экспорта массива точек в `.ply` и `.pcd`:
+
 ```python
-Δq = J^T(JJ^T + λI)^{-1} · error, λ = 0.005
+import numpy as np
+import open3d as o3d
+
+points = np.load("maps/slam_map.npy")
+cloud = o3d.geometry.PointCloud()
+cloud.points = o3d.utility.Vector3dVector(points)
+o3d.io.write_point_cloud("maps/slam_map.ply", cloud)
+o3d.io.write_point_cloud("maps/slam_map.pcd", cloud)
 ```
 
-## Performance Metrics
+## Ограничения и дальнейшая работа
 
-| Metric | Value |
-|--------|-------|
-| Walking Distance | 2.01m |
-| Walking Speed | ~0.4 m/s |
-| Manipulation Success | 75-100% |
-| Push Recovery | 4/4 directions |
-| MPC Energy Savings | 49% vs PD |
-| ZMP Trajectory | 69cm |
-| Footstep Planning | 16 steps w/ obstacles |
+В текущей версии наблюдается накопленный drift одометрии: при движении по коридору оцененная траектория постепенно отклоняется от прямой. Это ожидаемое ограничение локальной ICP-регистрации без замыкания петель.
 
-## Visualizations
+Следующий технический шаг — добавить loop closure и глобальную оптимизацию позы. Это позволит уменьшить накопленную ошибку и повысить точность карты при повторном проходе по уже посещенным участкам.
 
-<p align="center">
-  <img src="results/demo_footstep.png" width="30%"/>
-  <img src="results/demo_zmp.png" width="30%"/>
-  <img src="results/demo_mpc.png" width="30%"/>
-</p>
+## Автор
 
-*Left: A* footstep planning, Center: ZMP preview trajectories, Right: MPC balance comparison*
-
-## Running the Demos
-
-### Full Visualization (Interactive)
-```bash
-python src/full_visualization.py
-```
-6-phase demo with user prompts:
-1. Footstep Planning (A*)
-2. ZMP Preview Control
-3. RL Locomotion
-4. Manipulation (Jacobian IK)
-5. MPC Balance
-6. ZMP Stability Test
-
-### Showcase Demo (Video-friendly)
-```bash
-python src/showcase_demo.py
-```
-Continuous demonstration:
-- Walking 2m → Reaching → Push Recovery → Wave
-
-### Individual Features
-```bash
-python src/walk_and_reach.py        # Walk + Reach
-python src/zmp_preview_control.py   # ZMP Preview
-python src/footstep_planner.py      # A* Planning
-python src/mpc_balance.py           # MPC Balance
-```
-
-## Dependencies
-
-- Python 3.8+
-- MuJoCo 3.0+
-- NumPy, SciPy, Matplotlib
-- PyTorch (for RL policy)
-
-## References
-
-1. Kajita et al., "Biped Walking Pattern Generation by using Preview Control of Zero-Moment Point"
-2. Unitree G1 Documentation
-3. MuJoCo Physics Engine
-
-## Portfolio Highlights
-
-This project demonstrates:
-- ✅ **Whole-body motion planning** (walk + reach)
-- ✅ **Classical control** (ZMP, LIPM, preview control)
-- ✅ **Modern optimization** (MPC, A* search)
-- ✅ **Practical robotics** (IK, trajectory optimization)
-- ✅ **Simulation** (MuJoCo integration)
-
-
-## Future Work
-
-- [ ] Train custom RL locomotion policy in Isaac Sim
-- [ ] Vision-based manipulation
-- [ ] Dynamic walking with ZMP tracking
-- [ ] Real hardware deployment
-
-## License
-
-MIT License - see LICENSE file for details
-
-## Author
-
-**Ansh Bhansali**
-- Email: anshbhansali5@gmail.com
-- GitHub: [@ansh1113](https://github.com/ansh1113)
+**Полупанова Ксения Дмитриевна**
